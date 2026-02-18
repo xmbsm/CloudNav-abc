@@ -1,6 +1,77 @@
 interface Env {
-  CLOUDNAV_KV: any;
+  EDGEONE_KV_NAMESPACE: string;
+  EDGEONE_API_KEY: string;
+  EDGEONE_API_SECRET: string;
   PASSWORD: string;
+}
+
+// EdgeOne KV 客户端类
+class EdgeOneKVClient {
+  private namespace: string;
+  private apiKey: string;
+  private apiSecret: string;
+  
+  constructor(namespace: string, apiKey: string, apiSecret: string) {
+    this.namespace = namespace;
+    this.apiKey = apiKey;
+    this.apiSecret = apiSecret;
+  }
+  
+  async get(key: string): Promise<string | null> {
+    try {
+      const response = await fetch(
+        `https://api.edgeone.qq.com/v1/kv/${this.namespace}/keys/${encodeURIComponent(key)}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      if (response.status === 404) {
+        return null;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`EdgeOne KV GET error: ${response.status} ${await response.text()}`);
+      }
+      
+      const data = await response.json();
+      return data.value;
+    } catch (error) {
+      console.error('EdgeOne KV GET error:', error);
+      return null;
+    }
+  }
+  
+  async put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
+    try {
+      const body = {
+        value,
+        ...(options?.expirationTtl && { expiration: options.expirationTtl })
+      };
+      
+      const response = await fetch(
+        `https://api.edgeone.qq.com/v1/kv/${this.namespace}/keys/${encodeURIComponent(key)}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`EdgeOne KV PUT error: ${response.status} ${await response.text()}`);
+      }
+    } catch (error) {
+      console.error('EdgeOne KV PUT error:', error);
+      throw error;
+    }
+  }
 }
 
 // 统一的响应头
@@ -26,6 +97,13 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
     const checkAuth = url.searchParams.get('checkAuth');
     const getConfig = url.searchParams.get('getConfig');
     
+    // 初始化 EdgeOne KV 客户端
+    const kvClient = new EdgeOneKVClient(
+      env.EDGEONE_KV_NAMESPACE,
+      env.EDGEONE_API_KEY,
+      env.EDGEONE_API_SECRET
+    );
+    
     // 如果是检查认证请求，返回是否设置了密码
     if (checkAuth === 'true') {
       const serverPassword = env.PASSWORD;
@@ -39,7 +117,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
     
     // 如果是获取配置请求
     if (getConfig === 'ai') {
-      const aiConfig = await env.CLOUDNAV_KV.get('ai_config');
+      const aiConfig = await kvClient.get('ai_config');
       return new Response(aiConfig || '{}', {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
@@ -47,7 +125,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
     
     // 如果是获取搜索配置请求
     if (getConfig === 'search') {
-      const searchConfig = await env.CLOUDNAV_KV.get('search_config');
+      const searchConfig = await kvClient.get('search_config');
       return new Response(searchConfig || '{}', {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
@@ -55,7 +133,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
     
     // 如果是获取网站配置请求
     if (getConfig === 'website') {
-      const websiteConfig = await env.CLOUDNAV_KV.get('website_config');
+      const websiteConfig = await kvClient.get('website_config');
       return new Response(websiteConfig || JSON.stringify({ passwordExpiryDays: 7 }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
@@ -72,7 +150,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       }
       
       // 从KV中获取缓存的图标
-      const cachedIcon = await env.CLOUDNAV_KV.get(`favicon:${domain}`);
+      const cachedIcon = await kvClient.get(`favicon:${domain}`);
       if (cachedIcon) {
         return new Response(JSON.stringify({ icon: cachedIcon, cached: true }), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -86,7 +164,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
     }
     
     // 从 KV 中读取数据
-    const data = await env.CLOUDNAV_KV.get('app_data');
+    const data = await kvClient.get('app_data');
     
     // 如果是获取数据请求，需要密码验证
     if (url.searchParams.get('getConfig') === 'true') {
@@ -99,13 +177,13 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       }
       
       // 检查密码是否过期
-      const websiteConfigStr = await env.CLOUDNAV_KV.get('website_config');
+      const websiteConfigStr = await kvClient.get('website_config');
       const websiteConfig = websiteConfigStr ? JSON.parse(websiteConfigStr) : { passwordExpiryDays: 7 };
       const passwordExpiryDays = websiteConfig.passwordExpiryDays || 7;
       
       // 如果设置了密码过期时间，检查是否过期
       if (passwordExpiryDays > 0) {
-        const lastAuthTime = await env.CLOUDNAV_KV.get('last_auth_time');
+        const lastAuthTime = await kvClient.get('last_auth_time');
         if (lastAuthTime) {
           const lastTime = parseInt(lastAuthTime);
           const now = Date.now();
@@ -122,7 +200,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       }
       
       // 更新最后认证时间
-      await env.CLOUDNAV_KV.put('last_auth_time', Date.now().toString());
+      await kvClient.put('last_auth_time', Date.now().toString());
     }
     
     if (!data) {
@@ -136,6 +214,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   } catch (err) {
+    console.error('Error in onRequestGet:', err);
     return new Response(JSON.stringify({ error: 'Failed to fetch data' }), {
       status: 500,
       headers: corsHeaders,
@@ -146,6 +225,13 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
 // POST: 保存数据
 export const onRequestPost = async (context: { request: Request; env: Env }) => {
   const { request, env } = context;
+
+  // 初始化 EdgeOne KV 客户端
+  const kvClient = new EdgeOneKVClient(
+    env.EDGEONE_KV_NAMESPACE,
+    env.EDGEONE_API_KEY,
+    env.EDGEONE_API_SECRET
+  );
 
   // 1. 验证密码（对于敏感操作需要密码）
   const providedPassword = request.headers.get('x-auth-password');
@@ -171,7 +257,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       }
       
       // 更新最后认证时间
-      await env.CLOUDNAV_KV.put('last_auth_time', Date.now().toString());
+      await kvClient.put('last_auth_time', Date.now().toString());
       
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -190,7 +276,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
         }
       }
       
-      await env.CLOUDNAV_KV.put('search_config', JSON.stringify(body.config));
+      await kvClient.put('search_config', JSON.stringify(body.config));
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
@@ -207,7 +293,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       }
       
       // 保存图标到KV，设置过期时间为30天
-      await env.CLOUDNAV_KV.put(`favicon:${domain}`, icon, { expirationTtl: 30 * 24 * 60 * 60 });
+      await kvClient.put(`favicon:${domain}`, icon, { expirationTtl: 30 * 24 * 60 * 60 });
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
@@ -230,7 +316,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     
     // 如果是保存AI配置
     if (body.saveConfig === 'ai') {
-      await env.CLOUDNAV_KV.put('ai_config', JSON.stringify(body.config));
+      await kvClient.put('ai_config', JSON.stringify(body.config));
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
@@ -238,19 +324,20 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     
     // 如果是保存网站配置
     if (body.saveConfig === 'website') {
-      await env.CLOUDNAV_KV.put('website_config', JSON.stringify(body.config));
+      await kvClient.put('website_config', JSON.stringify(body.config));
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
     
     // 将数据写入 KV
-    await env.CLOUDNAV_KV.put('app_data', JSON.stringify(body));
+    await kvClient.put('app_data', JSON.stringify(body));
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   } catch (err) {
+    console.error('Error in onRequestPost:', err);
     return new Response(JSON.stringify({ error: 'Failed to save data' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },

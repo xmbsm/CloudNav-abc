@@ -1,6 +1,8 @@
 
 interface Env {
-  CLOUDNAV_KV: any;
+  EDGEONE_KV_NAMESPACE: string;
+  EDGEONE_API_KEY: string;
+  EDGEONE_API_SECRET: string;
   PASSWORD: string;
 }
 
@@ -11,6 +13,75 @@ const corsHeaders = {
   'Access-Control-Max-Age': '86400',
 };
 
+// EdgeOne KV 客户端类
+class EdgeOneKVClient {
+  private namespace: string;
+  private apiKey: string;
+  private apiSecret: string;
+  
+  constructor(namespace: string, apiKey: string, apiSecret: string) {
+    this.namespace = namespace;
+    this.apiKey = apiKey;
+    this.apiSecret = apiSecret;
+  }
+  
+  async get(key: string): Promise<string | null> {
+    try {
+      const response = await fetch(
+        `https://api.edgeone.qq.com/v1/kv/${this.namespace}/keys/${encodeURIComponent(key)}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      if (response.status === 404) {
+        return null;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`EdgeOne KV GET error: ${response.status} ${await response.text()}`);
+      }
+      
+      const data = await response.json();
+      return data.value;
+    } catch (error) {
+      console.error('EdgeOne KV GET error:', error);
+      return null;
+    }
+  }
+  
+  async put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
+    try {
+      const body = {
+        value,
+        ...(options?.expirationTtl && { expiration: options.expirationTtl })
+      };
+      
+      const response = await fetch(
+        `https://api.edgeone.qq.com/v1/kv/${this.namespace}/keys/${encodeURIComponent(key)}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`EdgeOne KV PUT error: ${response.status} ${await response.text()}`);
+      }
+    } catch (error) {
+      console.error('EdgeOne KV PUT error:', error);
+      throw error;
+    }
+  }
+}
+
 export const onRequestOptions = async () => {
   return new Response(null, {
     status: 204,
@@ -20,6 +91,13 @@ export const onRequestOptions = async () => {
 
 export const onRequestPost = async (context: { request: Request; env: Env }) => {
   const { request, env } = context;
+
+  // 初始化 EdgeOne KV 客户端
+  const kvClient = new EdgeOneKVClient(
+    env.EDGEONE_KV_NAMESPACE,
+    env.EDGEONE_API_KEY,
+    env.EDGEONE_API_SECRET
+  );
 
   // 1. Auth Check
   const providedPassword = request.headers.get('x-auth-password');
@@ -41,7 +119,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     }
 
     // 2. Fetch current data from KV
-    const currentDataStr = await env.CLOUDNAV_KV.get('app_data');
+    const currentDataStr = await kvClient.get('app_data');
     let currentData = { links: [], categories: [] };
     
     if (currentDataStr) {
@@ -108,7 +186,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     currentData.links = [newLink, ...(currentData.links || [])];
 
     // 6. Save back to KV
-    await env.CLOUDNAV_KV.put('app_data', JSON.stringify(currentData));
+    await kvClient.put('app_data', JSON.stringify(currentData));
 
     return new Response(JSON.stringify({ 
         success: true, 
@@ -119,6 +197,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     });
 
   } catch (err: any) {
+    console.error('Error in onRequestPost:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
