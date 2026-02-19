@@ -517,6 +517,8 @@ function App() {
 
     // Initial Data Fetch
     const initData = async () => {
+        console.log('Production mode: checking auth and fetching data');
+        
         // 首先检查是否需要认证
         try {
             const authRes = await fetch('/api/storage?checkAuth=true');
@@ -808,6 +810,9 @@ function App() {
 
   const handleLogin = async (password: string): Promise<boolean> => {
       try {
+        // 生产环境：调用后端API验证密码
+        console.log('Production login: calling backend API');
+        
         // 首先验证密码
         const authResponse = await fetch('/api/storage', {
             method: 'POST',
@@ -824,50 +829,15 @@ function App() {
             setIsAuthOpen(false);
             setSyncStatus('saved');
             
-            // 登录成功后，获取网站配置（包括密码过期时间设置）
-            try {
-                const websiteConfigRes = await fetch('/api/storage?getConfig=website');
-                if (websiteConfigRes.ok) {
-                    const websiteConfigData = await websiteConfigRes.json();
-                    if (websiteConfigData) {
-                        setSiteSettings(prev => ({
-                            ...prev,
-                            title: websiteConfigData.title || prev.title,
-                            navTitle: websiteConfigData.navTitle || prev.navTitle,
-                            favicon: websiteConfigData.favicon || prev.favicon,
-                            cardStyle: websiteConfigData.cardStyle || prev.cardStyle,
-                            passwordExpiryDays: websiteConfigData.passwordExpiryDays !== undefined ? websiteConfigData.passwordExpiryDays : prev.passwordExpiryDays
-                        }));
-                    }
-                }
-            } catch (e) {
-                console.warn("Failed to fetch website config after login.", e);
-            }
-            
-            // 检查密码是否过期
-            const lastLoginTime = localStorage.getItem('lastLoginTime');
+            // 设置登录时间
             const currentTime = Date.now();
-            
-            if (lastLoginTime) {
-                const lastLogin = parseInt(lastLoginTime);
-                const timeDiff = currentTime - lastLogin;
-                
-                const expiryTimeMs = (siteSettings.passwordExpiryDays || 7) > 0 ? (siteSettings.passwordExpiryDays || 7) * 24 * 60 * 60 * 1000 : 0;
-                
-                if (expiryTimeMs > 0 && timeDiff > expiryTimeMs) {
-                    setAuthToken(null);
-                    localStorage.removeItem(AUTH_KEY);
-                    setIsAuthOpen(true);
-                    alert('您的密码已过期，请重新登录');
-                    return false;
-                }
-            }
-            
             localStorage.setItem('lastLoginTime', currentTime.toString());
             
             // 登录成功后，从服务器获取数据
             try {
-                const res = await fetch('/api/storage');
+                const res = await fetch('/api/storage', {
+                    headers: { 'x-auth-password': password }
+                });
                 if (res.ok) {
                     const data = await res.json();
                     // 如果服务器有数据，使用服务器数据
@@ -909,10 +879,13 @@ function App() {
                 console.warn("Failed to fetch AI config after login.", e);
             }
             
+            // 模拟登录成功
+            setTimeout(() => setSyncStatus('idle'), 2000);
             return true;
         }
         return false;
       } catch (e) {
+          console.error('Login error:', e);
           return false;
       }
   };
