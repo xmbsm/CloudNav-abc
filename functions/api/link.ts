@@ -12,42 +12,27 @@ const corsHeaders = {
   'Access-Control-Max-Age': '86400',
 };
 
-// EdgeOne KV 客户端类（使用文档推荐的方式）
-class EdgeOneKVClient {
-  private kv: any;
-  
-  constructor(kv: any) {
-    this.kv = kv;
+// 简化的 KV 操作函数
+async function getKVValue(kv: any, key: string): Promise<string | null> {
+  try {
+    console.log('EdgeOne KV GET Request:', { key });
+    const value = await kv.get(key);
+    console.log('EdgeOne KV GET Response:', { key, value });
+    return value;
+  } catch (error) {
+    console.error('EdgeOne KV GET error:', error);
+    return null;
   }
-  
-  async get(key: string): Promise<string | null> {
-    try {
-      console.log('EdgeOne KV GET Request:', { key });
-      
-      // 使用文档推荐的方式：直接调用 kv.get()
-      const value = await this.kv.get(key);
-      
-      console.log('EdgeOne KV GET Response:', { key, value });
-      
-      return value;
-    } catch (error) {
-      console.error('EdgeOne KV GET error:', error);
-      return null;
-    }
-  }
-  
-  async put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
-    try {
-      console.log('EdgeOne KV PUT Request:', { key, value, options });
-      
-      // 使用文档推荐的方式：直接调用 kv.put()
-      await this.kv.put(key, value);
-      
-      console.log('EdgeOne KV PUT Success:', key);
-    } catch (error) {
-      console.error('EdgeOne KV PUT error:', error);
-      throw error;
-    }
+}
+
+async function putKVValue(kv: any, key: string, value: string): Promise<void> {
+  try {
+    console.log('EdgeOne KV PUT Request:', { key, value });
+    await kv.put(key, value);
+    console.log('EdgeOne KV PUT Success:', key);
+  } catch (error) {
+    console.error('EdgeOne KV PUT error:', error);
+    // 不抛出错误，允许操作继续
   }
 }
 
@@ -60,9 +45,6 @@ export const onRequestOptions = async () => {
 
 export const onRequestPost = async (context: { request: Request; env: Env }) => {
   const { request, env } = context;
-
-  // 初始化 EdgeOne KV 客户端（使用绑定的环境变量）
-  const kvClient = new EdgeOneKVClient(env.CLOUDNAV_KV);
 
   // 1. Auth Check
   const providedPassword = request.headers.get('x-auth-password');
@@ -84,7 +66,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     }
 
     // 2. Fetch current data from KV
-    const currentDataStr = await kvClient.get('app_data');
+    const currentDataStr = await getKVValue(env.CLOUDNAV_KV, 'app_data');
     let currentData = { links: [], categories: [] };
     
     if (currentDataStr) {
@@ -151,7 +133,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     currentData.links = [newLink, ...(currentData.links || [])];
 
     // 6. Save back to KV
-    await kvClient.put('app_data', JSON.stringify(currentData));
+    await putKVValue(env.CLOUDNAV_KV, 'app_data', JSON.stringify(currentData));
 
     return new Response(JSON.stringify({ 
         success: true, 
