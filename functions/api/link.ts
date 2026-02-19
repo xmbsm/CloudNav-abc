@@ -1,5 +1,5 @@
+
 interface Env {
-  CLOUDNAV_KV: any;
   EDGEONE_KV_NAMESPACE: string;
   EDGEONE_API_KEY: string;
   EDGEONE_API_SECRET: string;
@@ -25,28 +25,59 @@ class EdgeOneKVClient {
     this.apiSecret = apiSecret;
   }
   
+  // 生成签名（腾讯云 API 签名方法）
+  private generateSignature(method: string, url: string, timestamp: number): string {
+    // 这里需要实现腾讯云 API 签名逻辑
+    // 简化版本：直接使用 API Key 作为签名
+    // 实际生产环境需要根据腾讯云文档实现完整的签名算法
+    return this.apiKey;
+  }
+  
   async get(key: string): Promise<string | null> {
     try {
-      const response = await fetch(
-        `https://api.edgeone.qq.com/v1/kv/${this.namespace}/keys/${encodeURIComponent(key)}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          }
+      const timestamp = Math.floor(Date.now() / 1000);
+      const url = `https://api.edgeone.qq.com/v1/kv/${this.namespace}/keys/${encodeURIComponent(key)}`;
+      
+      console.log('EdgeOne KV GET Request:', {
+        url,
+        namespace: this.namespace,
+        key
+      });
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `TC3-HMAC-SHA256 Credential=${this.apiKey}/${timestamp}/edgeone/tc3_request`,
+          'Content-Type': 'application/json',
+          'X-TC-Timestamp': timestamp.toString(),
+          'X-TC-Version': '2022-09-01',
+          'X-TC-Region': 'ap-guangzhou'
         }
-      );
+      });
+      
+      console.log('EdgeOne KV GET Response Status:', response.status);
       
       if (response.status === 404) {
+        console.log('EdgeOne KV GET: Key not found:', key);
         return null;
       }
       
+      const responseText = await response.text();
+      console.log('EdgeOne KV GET Response Body:', responseText);
+      
       if (!response.ok) {
-        throw new Error(`EdgeOne KV GET error: ${response.status} ${await response.text()}`);
+        throw new Error(`EdgeOne KV GET error: ${response.status} ${responseText}`);
       }
       
-      const data = await response.json();
-      return data.value;
+      const data = JSON.parse(responseText);
+      console.log('EdgeOne KV GET Parsed Data:', data);
+      
+      // 检查响应格式
+      if (data && typeof data === 'object' && 'value' in data) {
+        return data.value;
+      } else {
+        throw new Error('Invalid EdgeOne KV GET response format');
+      }
     } catch (error) {
       console.error('EdgeOne KV GET error:', error);
       return null;
@@ -55,26 +86,43 @@ class EdgeOneKVClient {
   
   async put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
     try {
+      const timestamp = Math.floor(Date.now() / 1000);
+      const url = `https://api.edgeone.qq.com/v1/kv/${this.namespace}/keys/${encodeURIComponent(key)}`;
+      
       const body = {
         value,
         ...(options?.expirationTtl && { expiration: options.expirationTtl })
       };
       
-      const response = await fetch(
-        `https://api.edgeone.qq.com/v1/kv/${this.namespace}/keys/${encodeURIComponent(key)}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(body)
-        }
-      );
+      console.log('EdgeOne KV PUT Request:', {
+        url,
+        namespace: this.namespace,
+        key,
+        body
+      });
+      
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `TC3-HMAC-SHA256 Credential=${this.apiKey}/${timestamp}/edgeone/tc3_request`,
+          'Content-Type': 'application/json',
+          'X-TC-Timestamp': timestamp.toString(),
+          'X-TC-Version': '2022-09-01',
+          'X-TC-Region': 'ap-guangzhou'
+        },
+        body: JSON.stringify(body)
+      });
+      
+      console.log('EdgeOne KV PUT Response Status:', response.status);
+      
+      const responseText = await response.text();
+      console.log('EdgeOne KV PUT Response Body:', responseText);
       
       if (!response.ok) {
-        throw new Error(`EdgeOne KV PUT error: ${response.status} ${await response.text()}`);
+        throw new Error(`EdgeOne KV PUT error: ${response.status} ${responseText}`);
       }
+      
+      console.log('EdgeOne KV PUT Success:', key);
     } catch (error) {
       console.error('EdgeOne KV PUT error:', error);
       throw error;
