@@ -2,6 +2,7 @@ interface Env {
   EDGEONE_KV_NAMESPACE: string;
   EDGEONE_API_KEY: string;
   EDGEONE_API_SECRET: string;
+  CLOUDNAV_KV: any;
   PASSWORD: string;
 }
 
