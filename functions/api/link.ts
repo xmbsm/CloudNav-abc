@@ -1,5 +1,5 @@
-
 interface Env {
+  CLOUDNAV_KV: any;
   EDGEONE_KV_NAMESPACE: string;
   EDGEONE_API_KEY: string;
   EDGEONE_API_SECRET: string;
